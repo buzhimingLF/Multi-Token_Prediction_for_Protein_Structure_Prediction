@@ -170,9 +170,31 @@ Multi-Token Prediction 的核心思想是一次预测多个 token，而不是传
 - 建议先用小模型跑通
 
 **Action Items**：
-- [ ] 我：阅读论文，理解 MTP 核心思想
-- [ ] 我：探索数据集，了解数据格式
+- [x] 我：阅读论文，理解 MTP 核心思想
+- [x] 我：探索数据集，了解数据格式
 - [ ] 我：分析师兄代码，理解实现细节
+
+---
+
+### 2026-01-24 数据集探索记录
+
+**PDBbind+ 数据集统计**：
+| 类型 | 数量 |
+|------|------|
+| Protein-ligand Complex | 27,385 |
+| Protein-Protein Complex | 4,594 |
+| Protein-nucleic acid Complex | 1,400+ |
+
+**重要公告**：
+- PDBbind version 2025 即将发布 (2026/01/20)
+- **PDBbind v.2020R1 可免费下载**，质量更高（推荐使用）
+- PDBbind refined set v.2024 已在 PDBbind+ 上可用
+- PDBbind version 2024 已发布
+
+**下一步行动**：
+1. 注册 PDBbind 账号下载 v.2020R1 数据集
+2. 分析数据格式，设计预处理流程
+3. 开始代码改造工作
 
 ---
 
