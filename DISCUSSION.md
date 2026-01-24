@@ -372,7 +372,42 @@ protein_sequences.json   # 原始序列数据 (19,037 样本)
 - 预测头数量: 4（论文建议值）
 - 最大序列长度: 512
 
-**下一步**：开始代码改造（VL → 纯文本）
+**下一步**：✅ 开始代码改造（VL → 纯文本）
+
+---
+
+### 2026-01-24 MTP 训练代码完成
+
+**创建了 `train_protein_mtp.py`**，主要改造：
+
+1. **模型架构**：
+   - 基础模型：Qwen2.5-0.5B（纯文本，替代 VL 模型）
+   - MTP 预测头：4 个独立的 Linear 层
+   - LoRA 微调：减少显存占用
+
+2. **数据处理**：
+   - `ProteinSequenceDataset`: 加载蛋白质序列
+   - `ProteinMTPCollator`: MTP 标签生成
+
+3. **损失函数**：
+   - 多头交叉熵损失
+   - 每个头预测不同偏移的未来 token
+
+**运行方式**：
+```bash
+python train_protein_mtp.py \
+    --train_data mtp_data_train.json \
+    --val_data mtp_data_val.json \
+    --model_name Qwen/Qwen2.5-0.5B \
+    --n_future_tokens 4 \
+    --batch_size 4 \
+    --num_epochs 3
+```
+
+**下一步**：
+1. 在 3090 GPU 上测试训练
+2. 调整超参数
+3. 评估模型效果
 
 ---
 
