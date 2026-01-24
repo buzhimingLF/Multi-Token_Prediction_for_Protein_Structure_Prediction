@@ -209,8 +209,15 @@ Multi-Token Prediction 的核心思想是一次预测多个 token，而不是传
 
 **下载步骤**：
 1. 访问 https://www.pdbbind-plus.org.cn/
-2. 注册账号
+2. 注册账号并登录
 3. 下载 PDBbind v.2020.R1 的 Index files 和 Protein-ligand complex structures
+4. ❗ **注意**：下载链接有时效性，点击后需立即下载
+
+**如果链接过期（Request has expired）**：
+- 重新登录网站
+- 重新点击下载按钮获取新链接
+- 立即下载（不要等待）
+- 如持续失败，联系技术支持：support@pdbbind-plus.org.cn
 
 **下一步行动**：
 1. 注册 PDBbind 账号下载数据集
