@@ -293,11 +293,45 @@ SEQRES   2 Z  229  GLY ALA ASN THR VAL PRO TYR GLN VAL SER LEU ASN SER
 | TRP | W | 色氨酸 |
 | TYR | Y | 酪氨酸 |
 
-**下一步：数据预处理流程设计**：
-1. 从 PDB 文件提取 SEQRES 记录
-2. 将三字母氨基酸转换为单字母序列
-3. 结合索引文件中的结合数据
+**数据预处理流程**：
+1. ✅ 从 PDB 文件提取 SEQRES 记录
+2. ✅ 将三字母氨基酸转换为单字母序列
+3. ✅ 结合索引文件中的结合数据
 4. 设计训练数据格式
+
+---
+
+### 2026-01-24 数据预处理脚本完成
+
+**创建了 `data_preprocessing.py`**，功能：
+- 解析索引文件，提取复合物信息
+- 从 PDB 文件提取 SEQRES 记录
+- 将三字母氨基酸转换为单字母序列
+- 输出 JSON 格式的数据文件
+
+**测试结果**（100个样本）：
+```
+成功: 100, 错误: 0
+序列长度统计:
+  最短: 104
+  最长: 2856
+  平均: 412.6
+```
+
+**示例数据**：
+```json
+{
+  "pdb_code": "2tpi",
+  "sequence_length": 287,
+  "binding_data": "Kd=49uM",
+  "full_sequence": "VDDDDKIVGGYTCGANTVPYQVSLNSGYHFCGGSLINSQWVVSAAHCYKS..."
+}
+```
+
+**下一步**：
+1. 处理全部 19,037 个复合物
+2. 设计 MTP 训练数据格式
+3. 开始代码改造
 
 ---
 
