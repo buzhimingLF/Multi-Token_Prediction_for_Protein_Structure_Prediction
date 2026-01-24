@@ -220,9 +220,84 @@ Multi-Token Prediction 的核心思想是一次预测多个 token，而不是传
 - 如持续失败，联系技术支持：support@pdbbind-plus.org.cn
 
 **下一步行动**：
-1. 注册 PDBbind 账号下载数据集
-2. 分析数据格式，设计预处理流程
-3. 开始代码改造工作
+1. ✅ 注册 PDBbind 账号下载数据集
+2. ✅ 分析数据格式
+3. 设计预处理流程
+4. 开始代码改造工作
+
+---
+
+### 2026-01-24 数据集结构分析
+
+**数据集已下载并解压到以下目录**：
+```
+毕业论文/
+├── index/                    # 索引文件
+│   ├── INDEX_general_PL.2020R1.lst   # 蛋白质-配体 (19,037条)
+│   ├── INDEX_general_PP.2020R1.lst   # 蛋白质-蛋白质 (2,798条)
+│   ├── INDEX_general_PN.2020R1.lst   # 蛋白质-核酸 (1,032条)
+│   ├── INDEX_general_NL.2020R1.lst   # 核酸-配体 (143条)
+│   └── README
+└── P-L/                      # 蛋白质-配体复合物结构
+    ├── 1981-2000/            # 1,111个复合物
+    ├── 2001-2010/            # 5,691个复合物
+    └── 2011-2019/            # 12,235个复合物
+```
+
+**索引文件格式** (INDEX_general_PL.2020R1.lst)：
+```
+# PDB code, resolution, release year, binding data, reference, ligand name
+2tpi  2.10  1982  Kd=49uM       // 2tpi.pdf (2-mer)
+5tln  2.30  1982  Ki=0.43uM     // 5tln.pdf (BAN)
+```
+
+**复合物目录结构** (每个 PDB code 对应一个目录)：
+```
+2tpi/
+├── 2tpi_protein.pdb    # 蛋白质结构 (PDB格式)
+├── 2tpi_pocket.pdb     # 结合位点结构
+├── 2tpi_ligand.mol2    # 配体结构 (Mol2格式)
+└── 2tpi_ligand.sdf     # 配体结构 (SDF格式)
+```
+
+**PDB文件中的蛋白质序列** (SEQRES记录)：
+```
+SEQRES   1 Z  229  VAL ASP ASP ASP ASP LYS ILE VAL GLY GLY TYR THR CYS
+SEQRES   2 Z  229  GLY ALA ASN THR VAL PRO TYR GLN VAL SER LEU ASN SER
+...
+```
+- 使用三字母缩写表示氨基酸
+- 需要转换为单字母序列用于模型训练
+
+**氨基酸编码表**：
+| 三字母 | 单字母 | 名称 |
+|--------|--------|------|
+| ALA | A | 丙氨酸 |
+| CYS | C | 半胱氨酸 |
+| ASP | D | 天冒氨酸 |
+| GLU | E | 谷氨酸 |
+| PHE | F | 苯丙氨酸 |
+| GLY | G | 甘氨酸 |
+| HIS | H | 组氨酸 |
+| ILE | I | 异亮氨酸 |
+| LYS | K | 赖氨酸 |
+| LEU | L | 亮氨酸 |
+| MET | M | 甲硫氨酸 |
+| ASN | N | 天冒酰胺 |
+| PRO | P | 脂氨酸 |
+| GLN | Q | 谷氨酰胺 |
+| ARG | R | 精氨酸 |
+| SER | S | 丝氨酸 |
+| THR | T | 苏氨酸 |
+| VAL | V | 缮氨酸 |
+| TRP | W | 色氨酸 |
+| TYR | Y | 酪氨酸 |
+
+**下一步：数据预处理流程设计**：
+1. 从 PDB 文件提取 SEQRES 记录
+2. 将三字母氨基酸转换为单字母序列
+3. 结合索引文件中的结合数据
+4. 设计训练数据格式
 
 ---
 

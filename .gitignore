@@ -1,0 +1,34 @@
+# 数据集文件（太大，不上传到GitHub）
+P-L/
+index/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 模型文件
+*.pt
+*.pth
+*.bin
+*.safetensors
+
+# 日志
+*.log
+logs/
+
+# 临时文件
+*.tmp
+*.temp
+.DS_Store
