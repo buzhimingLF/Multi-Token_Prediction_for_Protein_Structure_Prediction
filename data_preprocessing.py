@@ -197,12 +197,12 @@ def main():
     print("开始处理 PDBbind 数据集")
     print("=" * 50)
     
-    # 测试模式：只处理100个样本
+    # 处理全部数据
     results = process_dataset(
         str(data_dir),
         str(index_file),
         str(output_file),
-        max_samples=100  # 测试时只处理100个
+        max_samples=None  # 处理全部数据
     )
     
     # 显示示例

@@ -1,6 +1,10 @@
 # 数据集文件（太大，不上传到GitHub）
 P-L/
 index/
+protein_sequences.json
+mtp_data_train.json
+mtp_data_val.json
+instruction_data.json
 
 # Python
 __pycache__/
