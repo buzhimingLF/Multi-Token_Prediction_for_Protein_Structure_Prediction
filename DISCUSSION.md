@@ -185,14 +185,35 @@ Multi-Token Prediction 的核心思想是一次预测多个 token，而不是传
 | Protein-Protein Complex | 4,594 |
 | Protein-nucleic acid Complex | 1,400+ |
 
-**重要公告**：
-- PDBbind version 2025 即将发布 (2026/01/20)
-- **PDBbind v.2020R1 可免费下载**，质量更高（推荐使用）
-- PDBbind refined set v.2024 已在 PDBbind+ 上可用
-- PDBbind version 2024 已发布
+---
+
+### 📥 数据集下载方案（确定）
+
+**首选：PDBbind v.2020.R1（免费版本）**
+
+| 序号 | 文件 | 大小 | 说明 |
+|------|------|------|------|
+| 1 | **Index files** | 497KB | 索引文件（PDB代码、分辨率、结合数据等） |
+| 2 | **Protein-ligand complex structures** | 3.1GB | 19,037个蛋白质-配体复合物结构 |
+
+**选择理由**：
+1. ✅ **免费** - 注册用户即可下载
+2. ✅ **质量更高** - 使用v.2024的新工作流程重新处理
+3. ✅ **数据量适中** - 19,037个复合物足够训练
+4. ✅ **适合初期实验** - 先用这个跑通流程
+
+**数据特点**：
+- 包含 PDBbind v.2020 中仍保留在 v.2024 的复合物
+- 结构文件已用 v.2024 新工作流程重新处理
+- 部分复合物的结合数据已更新
+
+**下载步骤**：
+1. 访问 https://www.pdbbind-plus.org.cn/
+2. 注册账号
+3. 下载 PDBbind v.2020.R1 的 Index files 和 Protein-ligand complex structures
 
 **下一步行动**：
-1. 注册 PDBbind 账号下载 v.2020R1 数据集
+1. 注册 PDBbind 账号下载数据集
 2. 分析数据格式，设计预处理流程
 3. 开始代码改造工作
 
