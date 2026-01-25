@@ -1,0 +1,317 @@
+"""
+ProteinMTP 训练脚本 - 坐标回归版本
+基于 Multi-Token Prediction 的蛋白质结构预测模型
+
+参考师兄的 SFT_main.py，改造为坐标回归任务：
+- 使用 placeholder tokens 限定输出长度为 k=序列长度
+- 输出从分类logits改为坐标 (x,y,z)
+- 损失函数从分类损失改为MSE回归损失
+"""
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import json
+import argparse
+import os
+import warnings
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    Trainer,
+    TrainingArguments
+)
+from torch.utils.data import Dataset
+from peft import LoraConfig, TaskType, get_peft_model
+from tqdm import tqdm
+
+warnings.filterwarnings('ignore')
+
+
+class ProteinCoordDataset(Dataset):
+    """蛋白质坐标数据集"""
+
+    def __init__(self, json_path: str, tokenizer, max_length: int = 512):
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+
+        print(f"加载数据: {json_path}")
+        with open(json_path, 'r') as f:
+            self.data = json.load(f)
+        print(f"加载了 {len(self.data)} 个样本")
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        item = self.data[idx]
+        return {
+            'sequence': item['sequence'],
+            'coords': item['coords'],  # [[x,y,z], ...]
+            'seq_len': item['seq_len'],
+            'pdb_code': item.get('pdb_code', ''),
+        }
+
+
+class ProteinCoordCollator:
+    """MTP 数据整理器 - 坐标回归版本"""
+
+    def __init__(self, tokenizer, max_length: int = 512):
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+
+    def __call__(self, batch):
+        """
+        参考师兄代码的 Qwen3_VL_Lora_Collator
+        关键：在输入末尾添加 num_of_pl_tokens 个 placeholder tokens
+        """
+        sequences = [item['sequence'] for item in batch]
+        coords_list = [torch.tensor(item['coords'], dtype=torch.float32) for item in batch]
+        seq_lens = [item['seq_len'] for item in batch]
+
+        # Tokenize 序列
+        encodings = self.tokenizer(
+            sequences,
+            padding=False,  # 手动padding
+            truncation=True,
+            max_length=self.max_length,
+            return_tensors='pt'
+        )
+
+        # 处理batch（目前只支持batch_size=1，与师兄代码一致）
+        assert len(batch) == 1, "目前只支持 batch_size=1"
+
+        input_ids = encodings['input_ids'][0]
+        attention_mask = encodings['attention_mask'][0]
+
+        # 添加 placeholder tokens（参考师兄代码）
+        # num_of_pl_tokens = 序列长度
+        num_of_pl_tokens = seq_lens[0]
+        unk_token_id = self.tokenizer.convert_tokens_to_ids('<unk>') if '<unk>' in self.tokenizer.get_vocab() else self.tokenizer.unk_token_id
+
+        added_pl_tokens = [unk_token_id] * num_of_pl_tokens
+        input_ids = torch.cat([input_ids, torch.tensor(added_pl_tokens, dtype=input_ids.dtype)])[None]
+        attention_mask = torch.cat([attention_mask, torch.tensor([1] * num_of_pl_tokens, dtype=attention_mask.dtype)])[None]
+
+        # 坐标标签
+        coords = coords_list[0]  # (seq_len, 3)
+
+        return {
+            'input_ids': input_ids,
+            'attention_mask': attention_mask,
+            'coords': coords[None],  # (1, seq_len, 3)
+            'num_of_pl_tokens': num_of_pl_tokens,
+        }
+
+
+class LabelWiseAttention(nn.Module):
+    """
+    参考师兄代码的 LabelWiseAttention
+    将 (B, seq_len, hidden_size) 映射到 (B, class_num, hidden_size)
+    在我们的任务中：class_num = 序列长度
+    """
+    def __init__(self, inSize, classNum):
+        super(LabelWiseAttention, self).__init__()
+        self.U = nn.Linear(inSize, classNum)
+
+    def forward(self, X):
+        # X: batchSize × seqLen × inSize
+        alpha = F.softmax(self.U(X), dim=1)  # => batchSize × seqLen × classNum
+        X = torch.matmul(X.transpose(1, 2), alpha)  # => batchSize × inSize × classNum
+        return X.transpose(1, 2)
+
+
+class ProteinStructureMTP(nn.Module):
+    """
+    蛋白质结构预测 MTP 模型
+    参考师兄的 HuggingfaceModelWithMTP，改造为坐标回归
+    """
+
+    def __init__(self, base_model, max_seq_len: int):
+        super().__init__()
+        self.base_model = base_model
+        self.max_seq_len = max_seq_len
+
+        # 获取隐藏层大小
+        config = base_model.config
+        hidden_size = config.hidden_size
+
+        # 参考师兄代码的 LabelWiseAttention
+        # 将 placeholder tokens 的 hidden states 映射到每个氨基酸
+        self.coord_proj = LabelWiseAttention(hidden_size, max_seq_len)
+
+        # 坐标预测头：将特征映射到 3D 坐标
+        self.coord_head = nn.Linear(hidden_size, 3)
+
+    def forward(self, input_ids, attention_mask, num_of_pl_tokens, coords=None, **kwargs):
+        """
+        参考师兄代码的 forward 逻辑
+
+        Args:
+            input_ids: (B, L+k) - L是输入长度，k是placeholder数量
+            attention_mask: (B, L+k)
+            num_of_pl_tokens: k - placeholder tokens数量（=序列长度）
+            coords: (B, seq_len, 3) - 真实坐标（训练时提供）
+        """
+        # 获取 hidden states（参考师兄代码）
+        outputs = self.base_model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            output_hidden_states=True,
+            **kwargs
+        )
+
+        tmp = outputs.hidden_states[-1]  # (B, L+k, hidden_size)
+
+        # 分离输入部分和placeholder部分（参考师兄代码）
+        lm_part = tmp[..., :-num_of_pl_tokens, :]  # (B, L, hidden_size)
+        pl_part = tmp[..., -num_of_pl_tokens:, :]   # (B, k, hidden_size)
+
+        # 池化输入特征（参考师兄代码）
+        lm_part_pooled = lm_part.max(dim=1, keepdims=True)[0]  # (B, 1, hidden_size)
+
+        # 通过 LabelWiseAttention 映射（参考师兄代码）
+        coord_features = self.coord_proj(
+            torch.cat([lm_part_pooled, pl_part], dim=1)
+        )  # (B, max_seq_len, hidden_size)
+
+        # 预测坐标
+        pred_coords = self.coord_head(coord_features)  # (B, max_seq_len, 3)
+
+        # 只取前 num_of_pl_tokens 个（实际序列长度）
+        pred_coords = pred_coords[:, :num_of_pl_tokens, :]  # (B, seq_len, 3)
+
+        # 计算损失
+        loss = None
+        if coords is not None:
+            loss = F.mse_loss(pred_coords, coords)
+
+        return {
+            'loss': loss,
+            'pred_coords': pred_coords,
+        }
+
+
+class CoordMTPTrainer(Trainer):
+    """坐标回归 MTP 训练器"""
+
+    def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        coords = inputs.pop("coords")
+        num_of_pl_tokens = inputs.pop("num_of_pl_tokens")
+
+        outputs = model(**inputs, num_of_pl_tokens=num_of_pl_tokens, coords=coords)
+        loss = outputs['loss']
+
+        return (loss, outputs) if return_outputs else loss
+
+
+def main():
+    parser = argparse.ArgumentParser(description='ProteinMTP 训练脚本 - 坐标回归版本')
+
+    # 数据参数
+    parser.add_argument('--train_data', type=str, default='coord_train.json')
+    parser.add_argument('--val_data', type=str, default='coord_val.json')
+
+    # 模型参数
+    parser.add_argument('--model_name', type=str, default='Qwen/Qwen2.5-0.5B')
+    parser.add_argument('--max_seq_len', type=int, default=512)
+
+    # 训练参数
+    parser.add_argument('--batch_size', type=int, default=1)  # 目前只支持1
+    parser.add_argument('--learning_rate', type=float, default=1e-4)
+    parser.add_argument('--num_epochs', type=int, default=3)
+    parser.add_argument('--warmup_ratio', type=float, default=0.1)
+    parser.add_argument('--lora_rank', type=int, default=16)
+    parser.add_argument('--lora_alpha', type=int, default=32)
+    parser.add_argument('--output_dir', type=str, default='./output_structure')
+
+    args = parser.parse_args()
+
+    print("=" * 60)
+    print("ProteinMTP 训练 - 坐标回归版本")
+    print("=" * 60)
+    print(f"模型: {args.model_name}")
+    print(f"最大序列长度: {args.max_seq_len}")
+    print(f"批次大小: {args.batch_size}")
+    print(f"学习率: {args.learning_rate}")
+    print()
+
+    # 加载 tokenizer 和模型
+    print("加载模型...")
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    base_model = AutoModelForCausalLM.from_pretrained(
+        args.model_name,
+        torch_dtype=torch.bfloat16,
+        trust_remote_code=True
+    )
+
+    # 应用 LoRA（参考师兄代码）
+    print("应用 LoRA...")
+    lora_config = LoraConfig(
+        task_type=TaskType.CAUSAL_LM,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        inference_mode=False,
+        r=args.lora_rank,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=0.05,
+    )
+    base_model = get_peft_model(base_model, lora_config)
+    base_model.print_trainable_parameters()
+
+    # 创建 MTP 模型
+    model = ProteinStructureMTP(base_model, max_seq_len=args.max_seq_len)
+
+    # 加载数据集
+    print("\n加载数据集...")
+    train_dataset = ProteinCoordDataset(args.train_data, tokenizer, args.max_seq_len)
+    val_dataset = ProteinCoordDataset(args.val_data, tokenizer, args.max_seq_len) if os.path.exists(args.val_data) else None
+
+    # 数据整理器
+    collator = ProteinCoordCollator(tokenizer, args.max_seq_len)
+
+    # 训练参数
+    training_args = TrainingArguments(
+        output_dir=args.output_dir,
+        per_device_train_batch_size=args.batch_size,
+        per_device_eval_batch_size=args.batch_size,
+        num_train_epochs=args.num_epochs,
+        learning_rate=args.learning_rate,
+        warmup_ratio=args.warmup_ratio,
+        weight_decay=0.01,
+        logging_steps=50,
+        save_steps=500,
+        save_total_limit=3,
+        eval_strategy="steps" if val_dataset else "no",
+        eval_steps=500 if val_dataset else None,
+        bf16=True,
+        gradient_accumulation_steps=4,
+        remove_unused_columns=False,
+        report_to="none",
+    )
+
+    # 创建训练器
+    trainer = CoordMTPTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
+        data_collator=collator,
+    )
+
+    # 开始训练
+    print("\n开始训练...")
+    trainer.train()
+
+    # 保存模型
+    print(f"\n保存模型到 {args.output_dir}")
+    trainer.save_model()
+    tokenizer.save_pretrained(args.output_dir)
+
+    print("\n训练完成！")
+
+
+if __name__ == '__main__':
+    main()
