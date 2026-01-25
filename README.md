@@ -62,24 +62,41 @@ MTP通过placeholder tokens实现定长输出：
 
 ```
 ProteinMTP/
-├── README.md                    # 项目说明
-├── DISCUSSION.md                # 进度与讨论
-├── start.md                     # 需求文档
-├── SFT_main.py                  # 参考代码：师兄的MTP分类任务实现
-├── SFT_infer.py                 # 参考代码：推理脚本
-├── train_protein_mtp.py         # 蛋白质结构预测训练代码（需改造）
-├── data_preprocessing.py        # 数据预处理：提取序列
-├── create_coord_data.py         # 数据准备：提取序列+坐标（待完成）
+├── README.md                      # 项目说明
+├── DISCUSSION.md                  # 进度与讨论
+├── start.md                       # 需求文档
+│
+├── SFT_main.py                    # 参考代码：师兄的MTP分类任务实现
+├── SFT_infer.py                   # 参考代码：推理脚本
+│
+├── data_preprocessing.py          # 数据预处理：提取序列+坐标
+├── create_coord_data.py           # 数据准备：归一化、划分数据集
+│
+├── train_protein_structure.py    # ✅ 训练脚本：坐标回归
+├── infer_protein_structure.py    # ✅ 推理脚本：结构预测
+├── evaluate_structure.py          # ✅ 评估脚本：RMSD/TM-score等
+├── visualize_structure.py         # ✅ 可视化脚本：3D/2D结构图
+│
+├── train_protein_mtp.py           # ⚠️ 旧版本(标准MTP),不推荐使用
 └── ...
 ```
 
-**文件说明**：
-- `SFT_main.py`：师兄提供的参考代码，展示了如何用MTP做分类任务
-  - 核心：通过placeholder tokens实现定长输出（k=类别数）
-  - 关键组件：`LabelWiseAttention`、`HuggingfaceModelWithMTP`
-- `train_protein_mtp.py`：需要改造的训练代码
-  - 当前状态：实现了标准的MTP（预测未来k个token）
-  - 改造目标：参考`SFT_main.py`，实现坐标回归（k=序列长度）
+**核心文件说明**：
+
+| 文件 | 作用 | 状态 |
+|-----|------|------|
+| `SFT_main.py` | 师兄的参考代码(分类任务) | ✅ 参考 |
+| `data_preprocessing.py` | 从PDB提取序列和坐标 | ✅ 完成 |
+| `create_coord_data.py` | 创建训练数据集(归一化、划分) | ✅ 完成 |
+| `train_protein_structure.py` | 训练坐标回归模型 | ✅ 推荐 |
+| `infer_protein_structure.py` | 预测蛋白质结构(生成PDB) | ✅ 新增 |
+| `evaluate_structure.py` | 评估预测结果(RMSD/TM-score) | ✅ 新增 |
+| `visualize_structure.py` | 可视化结构(3D/2D投影) | ✅ 新增 |
+
+**关键组件**：
+- `LabelWiseAttention`: 将placeholder tokens映射到输出位置
+- `ProteinStructureMTP`: MTP模型,输出(B, seq_len, 3)坐标
+- RMSD评估指标: 蛋白质结构预测的标准指标
 
 ## 快速开始
 
@@ -89,19 +106,109 @@ ProteinMTP/
 git clone git@github.com:buzhimingLF/ProteinMTP---Multi-Token-Prediction-for-Protein-Sequence-Generation.git
 cd ProteinMTP
 
-pip install torch transformers peft deepspeed
+# 安装依赖
+pip install -r requirements.txt
+
+# 或手动安装核心依赖
+pip install torch transformers peft accelerate numpy matplotlib
 ```
 
 ### 数据准备
 
-1. 从 [PDBbind-Plus](https://www.pdbbind-plus.org.cn/) 下载数据集
-2. 运行数据预处理脚本提取原子坐标
+```bash
+# 1. 从 PDBbind-Plus 下载数据集到 P-L/ 目录
+
+# 2. 提取序列和坐标
+python data_preprocessing.py --extract_coords --max_samples 1000
+
+# 3. 创建训练数据集
+python create_coord_data.py --max_seq_len 512
+```
 
 ### 训练模型
 
 ```bash
-# 待完善
-python train_protein_structure.py --data_path <data_path> --model_name Qwen/Qwen2.5-0.5B
+# 使用Qwen2.5-0.5B训练
+python train_protein_structure.py \
+    --train_data coord_train.json \
+    --val_data coord_val.json \
+    --model_name Qwen/Qwen2.5-0.5B \
+    --max_seq_len 512 \
+    --num_epochs 3 \
+    --learning_rate 1e-4 \
+    --output_dir ./output_structure
+```
+
+### 推理预测
+
+```bash
+# 预测单个序列的结构
+python infer_protein_structure.py \
+    --model_path ./output_structure \
+    --sequence "MKTAYIAKQRQISFVKTIGDEVQREAPGDSRLAGHFELSC" \
+    --output predicted_structure.pdb
+```
+
+### 评估与可视化
+
+```bash
+# 评估预测结果(与真实结构对比)
+python evaluate_structure.py \
+    --pred predicted_structure.pdb \
+    --true true_structure.pdb \
+    --all_metrics
+
+# 可视化结构
+python visualize_structure.py \
+    --pdb predicted_structure.pdb \
+    --output structure_viz.png \
+    --mode both \
+    --stats
+```
+
+## 完整工作流程
+
+### 1. 数据准备流程
+```bash
+# Step 1: 提取坐标数据(需要先下载PDBbind数据集)
+python data_preprocessing.py --extract_coords --max_samples 1000
+
+# Step 2: 创建训练数据集
+python create_coord_data.py --max_seq_len 512 --train_ratio 0.9
+```
+
+### 2. 模型训练流程
+```bash
+# 训练模型
+python train_protein_structure.py \
+    --train_data coord_train.json \
+    --val_data coord_val.json \
+    --model_name Qwen/Qwen2.5-0.5B \
+    --max_seq_len 512 \
+    --num_epochs 3 \
+    --output_dir ./output_structure
+```
+
+### 3. 推理与评估流程
+```bash
+# Step 1: 预测结构
+python infer_protein_structure.py \
+    --model_path ./output_structure \
+    --sequence "MKTAYIAKQRQISFVKTIGDEVQREAPGDSRLAGHFELSC" \
+    --output predicted.pdb
+
+# Step 2: 可视化
+python visualize_structure.py \
+    --pdb predicted.pdb \
+    --output structure.png \
+    --mode both \
+    --stats
+
+# Step 3: 评估(如果有真实结构)
+python evaluate_structure.py \
+    --pred predicted.pdb \
+    --true true_structure.pdb \
+    --all_metrics
 ```
 
 ## 实验进度
@@ -109,8 +216,9 @@ python train_protein_structure.py --data_path <data_path> --model_name Qwen/Qwen
 - [x] 确定研究方向
 - [x] 获取参考资料和代码
 - [x] 理解MTP核心逻辑
-- [ ] 代码改造（分类 -> 坐标回归）
-- [ ] 数据预处理（提取原子坐标）
+- [x] 代码改造（分类 -> 坐标回归）
+- [x] 数据预处理（提取原子坐标）
+- [x] 推理和评估脚本
 - [ ] 基线实验
 - [ ] 正式实验
 - [ ] 论文撰写

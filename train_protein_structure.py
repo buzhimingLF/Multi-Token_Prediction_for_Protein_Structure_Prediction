@@ -143,6 +143,24 @@ class ProteinStructureMTP(nn.Module):
         # 坐标预测头：将特征映射到 3D 坐标
         self.coord_head = nn.Linear(hidden_size, 3)
 
+    def compute_rmsd(self, pred_coords, true_coords):
+        """
+        计算RMSD (Root Mean Square Deviation)
+        这是蛋白质结构预测的标准评估指标
+
+        Args:
+            pred_coords: (B, seq_len, 3) 预测坐标
+            true_coords: (B, seq_len, 3) 真实坐标
+
+        Returns:
+            rmsd: 标量RMSD值
+        """
+        # 计算每个原子的距离平方
+        dist_sq = torch.sum((pred_coords - true_coords) ** 2, dim=-1)  # (B, seq_len)
+        # 计算均方根
+        rmsd = torch.sqrt(torch.mean(dist_sq))
+        return rmsd
+
     def forward(self, input_ids, attention_mask, num_of_pl_tokens, coords=None, **kwargs):
         """
         参考师兄代码的 forward 逻辑
@@ -181,14 +199,21 @@ class ProteinStructureMTP(nn.Module):
         # 只取前 num_of_pl_tokens 个（实际序列长度）
         pred_coords = pred_coords[:, :num_of_pl_tokens, :]  # (B, seq_len, 3)
 
-        # 计算损失
+        # 计算损失和指标
         loss = None
+        metrics = {}
         if coords is not None:
             loss = F.mse_loss(pred_coords, coords)
+
+            # 计算RMSD作为额外的评估指标
+            with torch.no_grad():
+                rmsd = self.compute_rmsd(pred_coords, coords)
+                metrics['rmsd'] = rmsd.item()
 
         return {
             'loss': loss,
             'pred_coords': pred_coords,
+            'metrics': metrics,
         }
 
 
@@ -309,6 +334,18 @@ def main():
     print(f"\n保存模型到 {args.output_dir}")
     trainer.save_model()
     tokenizer.save_pretrained(args.output_dir)
+
+    # 保存训练配置(用于推理)
+    training_config = {
+        'model_name': args.model_name,
+        'max_seq_len': args.max_seq_len,
+        'lora_rank': args.lora_rank,
+        'lora_alpha': args.lora_alpha,
+    }
+    config_path = os.path.join(args.output_dir, 'training_config.json')
+    with open(config_path, 'w') as f:
+        json.dump(training_config, f, indent=2)
+    print(f"训练配置已保存到: {config_path}")
 
     print("\n训练完成！")
 

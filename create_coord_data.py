@@ -15,21 +15,36 @@ from typing import List, Dict
 import argparse
 
 
-def normalize_coords(coords: np.ndarray) -> np.ndarray:
+def normalize_coords(coords: np.ndarray, method: str = 'center_scale') -> tuple:
     """
-    归一化坐标：零均值化
+    归一化坐标
 
     Args:
         coords: (seq_len, 3) 坐标数组
+        method: 归一化方法
+            - 'center': 只零均值化
+            - 'center_scale': 零均值化 + 标准化 (推荐)
 
     Returns:
-        归一化后的坐标
+        (normalized_coords, stats) 元组
+        - normalized_coords: 归一化后的坐标
+        - stats: 统计信息字典 {'mean': [...], 'std': [...]}
     """
     # 计算质心
     centroid = coords.mean(axis=0)
     # 零均值化
-    normalized = coords - centroid
-    return normalized
+    centered = coords - centroid
+
+    if method == 'center':
+        return centered, {'mean': centroid.tolist(), 'std': None}
+    elif method == 'center_scale':
+        # 计算标准差
+        std = centered.std()
+        # 标准化
+        normalized = centered / (std + 1e-8)  # 避免除0
+        return normalized, {'mean': centroid.tolist(), 'std': float(std)}
+    else:
+        raise ValueError(f"未知的归一化方法: {method}")
 
 
 def create_training_data(input_file: str, output_train: str, output_val: str,
@@ -60,11 +75,12 @@ def create_training_data(input_file: str, output_train: str, output_val: str,
     print(f"过滤后数据量 (seq_len <= {max_seq_len}): {len(filtered_data)}")
 
     # 归一化坐标
-    print("归一化坐标...")
+    print("归一化坐标 (center_scale方法)...")
     for item in filtered_data:
         coords = np.array(item['coords'])  # (seq_len, 3)
-        normalized_coords = normalize_coords(coords)
+        normalized_coords, stats = normalize_coords(coords, method='center_scale')
         item['coords'] = normalized_coords.tolist()
+        item['norm_stats'] = stats  # 保存归一化统计信息，推理时需要反归一化
 
     # 划分训练集和验证集
     np.random.seed(42)
