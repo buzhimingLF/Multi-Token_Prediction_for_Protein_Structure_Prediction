@@ -338,6 +338,7 @@ def main():
         gradient_accumulation_steps=4,
         remove_unused_columns=False,
         report_to="none",
+        save_safetensors=False,  # 避免共享权重导致的保存错误
     )
 
     # 创建训练器
@@ -353,22 +354,30 @@ def main():
     print("\n开始训练...")
     trainer.train()
 
-    # 保存模型
+    # 保存模型（手动保存以避免共享权重问题）
     print(f"\n保存模型到 {args.output_dir}")
-    trainer.save_model()
+    os.makedirs(args.output_dir, exist_ok=True)
+
+    # 保存模型状态（使用torch.save）
+    torch.save(model.state_dict(), os.path.join(args.output_dir, 'model.pt'))
+
+    # 保存tokenizer
     tokenizer.save_pretrained(args.output_dir)
 
-    # 保存训练配置(用于推理)
-    training_config = {
+    # 保存训练配置
+    config_to_save = {
         'model_name': args.model_name,
         'max_seq_len': args.max_seq_len,
         'lora_rank': args.lora_rank,
         'lora_alpha': args.lora_alpha,
     }
-    config_path = os.path.join(args.output_dir, 'training_config.json')
-    with open(config_path, 'w') as f:
-        json.dump(training_config, f, indent=2)
-    print(f"训练配置已保存到: {config_path}")
+    with open(os.path.join(args.output_dir, 'training_config.json'), 'w') as f:
+        json.dump(config_to_save, f, indent=2)
+
+    print(f"模型保存完成！")
+    print(f"  - 模型权重: {os.path.join(args.output_dir, 'model.pt')}")
+    print(f"  - Tokenizer: {args.output_dir}")
+    print(f"  - 训练配置: {os.path.join(args.output_dir, 'training_config.json')}")
 
     print("\n训练完成！")
 

@@ -47,24 +47,64 @@ def load_model(model_path: str, device: str = 'cuda'):
         }
         print("警告: 未找到训练配置,使用默认配置")
 
-    # 加载tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    # 加载tokenizer（从原始模型或保存的tokenizer）
+    if os.path.exists(os.path.join(model_path, 'tokenizer_config.json')):
+        tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(config['model_name'], trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # 加载基础模型
-    base_model = AutoModelForCausalLM.from_pretrained(
-        config['model_name'],
-        torch_dtype=torch.float32,
-        trust_remote_code=True
-    )
+    # 检查是否使用新的保存格式（model.pt）
+    model_pt_path = os.path.join(model_path, 'model.pt')
 
-    # 加载LoRA权重
-    base_model = PeftModel.from_pretrained(base_model, model_path)
-    base_model = base_model.merge_and_unload()  # 合并LoRA权重
+    if os.path.exists(model_pt_path):
+        # 新格式：直接加载model.pt
+        print("使用新格式加载模型（model.pt）")
 
-    # 创建MTP模型
-    model = ProteinStructureMTP(base_model, max_seq_len=config['max_seq_len'])
+        # 加载基础模型
+        base_model = AutoModelForCausalLM.from_pretrained(
+            config['model_name'],
+            torch_dtype=torch.float32,
+            trust_remote_code=True
+        )
+
+        # 应用LoRA配置（必须与训练时相同）
+        from peft import LoraConfig, TaskType, get_peft_model
+        lora_config = LoraConfig(
+            task_type=TaskType.CAUSAL_LM,
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            inference_mode=True,
+            r=config.get('lora_rank', 8),
+            lora_alpha=config.get('lora_alpha', 16),
+            lora_dropout=0.0,
+        )
+        base_model = get_peft_model(base_model, lora_config)
+
+        # 创建MTP模型
+        model = ProteinStructureMTP(base_model, max_seq_len=config['max_seq_len'])
+
+        # 加载训练好的权重
+        state_dict = torch.load(model_pt_path, map_location=device)
+        model.load_state_dict(state_dict)
+
+    else:
+        # 旧格式：使用PeftModel加载
+        print("使用旧格式加载模型（PEFT）")
+        base_model = AutoModelForCausalLM.from_pretrained(
+            config['model_name'],
+            torch_dtype=torch.float32,
+            trust_remote_code=True
+        )
+
+        # 加载LoRA权重
+        from peft import PeftModel
+        base_model = PeftModel.from_pretrained(base_model, model_path)
+        base_model = base_model.merge_and_unload()  # 合并LoRA权重
+
+        # 创建MTP模型
+        model = ProteinStructureMTP(base_model, max_seq_len=config['max_seq_len'])
+
     model = model.to(device)
     model.eval()
 
