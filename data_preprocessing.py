@@ -140,13 +140,50 @@ def extract_sequence_and_coords_from_pdb(pdb_file: str, use_atom_only: bool = Tr
     return sequences, coords
 
 
+def scan_data_directory(data_dir: str) -> List[Dict]:
+    """
+    直接扫描数据目录,获取所有 PDB 文件
+    用于没有索引文件的情况
+
+    Args:
+        data_dir: 数据目录路径
+
+    Returns:
+        复合物信息列表
+    """
+    complexes = []
+
+    for subdir in ['1981-2000', '2001-2010', '2011-2019']:
+        subdir_path = os.path.join(data_dir, subdir)
+        if not os.path.exists(subdir_path):
+            continue
+
+        # 扫描该年份范围下的所有 PDB 目录
+        for pdb_code in os.listdir(subdir_path):
+            pdb_dir = os.path.join(subdir_path, pdb_code)
+            if not os.path.isdir(pdb_dir):
+                continue
+
+            # 检查是否存在 protein.pdb 文件
+            protein_pdb = os.path.join(pdb_dir, f"{pdb_code}_protein.pdb")
+            if os.path.exists(protein_pdb):
+                complexes.append({
+                    'pdb_code': pdb_code,
+                    'binding_data': 'N/A',
+                    'resolution': 'N/A',
+                    'year': subdir.split('-')[0]
+                })
+
+    return complexes
+
+
 def parse_index_file(index_file: str) -> List[Dict]:
     """
     解析索引文件，提取复合物信息
-    
+
     Args:
         index_file: 索引文件路径
-        
+
     Returns:
         复合物信息列表
     """
@@ -176,22 +213,27 @@ def parse_index_file(index_file: str) -> List[Dict]:
     return complexes
 
 
-def process_dataset(data_dir: str, index_file: str, output_file: str, max_samples: int = None, extract_coords: bool = False):
+def process_dataset(data_dir: str, index_file: str = None, output_file: str = None, max_samples: int = None, extract_coords: bool = False):
     """
     处理整个数据集，提取蛋白质序列（可选：同时提取坐标）
 
     Args:
         data_dir: P-L 数据目录
-        index_file: 索引文件路径
+        index_file: 索引文件路径(如果为None或不存在,则直接扫描目录)
         output_file: 输出 JSON 文件路径
         max_samples: 最大样本数（用于测试）
         extract_coords: 是否提取坐标（用于结构预测任务）
     """
     import numpy as np
 
-    # 解析索引文件
-    print(f"解析索引文件: {index_file}")
-    complexes = parse_index_file(index_file)
+    # 解析索引文件或直接扫描目录
+    if index_file and os.path.exists(index_file):
+        print(f"解析索引文件: {index_file}")
+        complexes = parse_index_file(index_file)
+    else:
+        print(f"索引文件不存在,直接扫描数据目录: {data_dir}")
+        complexes = scan_data_directory(data_dir)
+
     print(f"找到 {len(complexes)} 个复合物")
 
     # 处理每个复合物
@@ -326,8 +368,8 @@ def main():
         return
 
     if not index_file.exists():
-        print(f"错误: 索引文件不存在: {index_file}")
-        return
+        print(f"警告: 索引文件不存在: {index_file}")
+        print(f"将直接扫描数据目录: {data_dir}")
 
     # 处理数据集
     print("=" * 50)

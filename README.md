@@ -117,13 +117,20 @@ pip install torch transformers peft accelerate numpy matplotlib
 
 ```bash
 # 1. 从 PDBbind-Plus 下载数据集到 P-L/ 目录
-
+https://www.pdbbind-plus.org.cn/download
+Demo: PDBbind v2020.R1 ->Index files 和 Protein-ligand complex structures
 # 2. 提取序列和坐标
-python data_preprocessing.py --extract_coords --max_samples 1000
+python3 data_preprocessing.py --extract_coords --max_samples 1000
 
 # 3. 创建训练数据集
-python create_coord_data.py --max_seq_len 512
+python3 create_coord_data.py --max_seq_len 512
 ```
+
+**重要说明**:
+- `data_preprocessing.py` 已改进为无需INDEX索引文件，可直接扫描P-L目录
+- 自动扫描 1981-2000, 2001-2010, 2011-2019 三个年份范围
+- 坐标自动归一化（零均值+标准化），归一化参数保存在每个样本的 `norm_stats` 字段
+- 如遇到PDB文件权限问题，运行: `find P-L/ -name "*.pdb" -type f -exec chmod 644 {} +`
 
 ### 训练模型
 

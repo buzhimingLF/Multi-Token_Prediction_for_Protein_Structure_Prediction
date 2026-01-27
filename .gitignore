@@ -2,6 +2,9 @@
 P-L/
 index/
 protein_sequences.json
+protein_coords_data.json
+coord_train.json
+coord_val.json
 mtp_data_train.json
 mtp_data_val.json
 instruction_data.json
@@ -36,3 +39,9 @@ logs/
 *.tmp
 *.temp
 .DS_Store
+*.pid
+
+# 训练输出
+output_structure/
+output_*/
+checkpoints/

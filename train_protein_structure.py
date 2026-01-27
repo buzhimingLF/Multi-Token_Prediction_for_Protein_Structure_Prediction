@@ -203,11 +203,18 @@ class ProteinStructureMTP(nn.Module):
         loss = None
         metrics = {}
         if coords is not None:
-            loss = F.mse_loss(pred_coords, coords)
+            # CPU不支持BFloat16的MSE，需要转换为float32
+            if pred_coords.dtype == torch.bfloat16:
+                loss = F.mse_loss(pred_coords.float(), coords.float())
+            else:
+                loss = F.mse_loss(pred_coords, coords)
 
             # 计算RMSD作为额外的评估指标
             with torch.no_grad():
-                rmsd = self.compute_rmsd(pred_coords, coords)
+                if pred_coords.dtype == torch.bfloat16:
+                    rmsd = self.compute_rmsd(pred_coords.float(), coords.float())
+                else:
+                    rmsd = self.compute_rmsd(pred_coords, coords)
                 metrics['rmsd'] = rmsd.item()
 
         return {
@@ -223,6 +230,11 @@ class CoordMTPTrainer(Trainer):
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         coords = inputs.pop("coords")
         num_of_pl_tokens = inputs.pop("num_of_pl_tokens")
+
+        # 确保coords与模型使用相同的dtype
+        model_dtype = next(model.parameters()).dtype
+        if coords.dtype != model_dtype:
+            coords = coords.to(dtype=model_dtype)
 
         outputs = model(**inputs, num_of_pl_tokens=num_of_pl_tokens, coords=coords)
         loss = outputs['loss']
@@ -267,9 +279,10 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    # 使用float32避免CPU上BFloat16的兼容性问题
     base_model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
-        torch_dtype=torch.bfloat16,
+        torch_dtype=torch.float32,
         trust_remote_code=True
     )
 
@@ -289,6 +302,11 @@ def main():
     # 创建 MTP 模型
     model = ProteinStructureMTP(base_model, max_seq_len=args.max_seq_len)
 
+    # 确保自定义层与base_model使用相同的dtype
+    model_dtype = next(base_model.parameters()).dtype
+    model.coord_proj = model.coord_proj.to(dtype=model_dtype)
+    model.coord_head = model.coord_head.to(dtype=model_dtype)
+
     # 加载数据集
     print("\n加载数据集...")
     train_dataset = ProteinCoordDataset(args.train_data, tokenizer, args.max_seq_len)
@@ -298,6 +316,10 @@ def main():
     collator = ProteinCoordCollator(tokenizer, args.max_seq_len)
 
     # 训练参数
+    # 自动检测是否支持 bf16，否则使用 fp16
+    use_bf16 = torch.cuda.is_available() and torch.cuda.is_bf16_supported()
+    use_fp16 = torch.cuda.is_available() and not use_bf16
+
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         per_device_train_batch_size=args.batch_size,
@@ -311,7 +333,8 @@ def main():
         save_total_limit=3,
         eval_strategy="steps" if val_dataset else "no",
         eval_steps=500 if val_dataset else None,
-        bf16=True,
+        bf16=use_bf16,
+        fp16=use_fp16,
         gradient_accumulation_steps=4,
         remove_unused_columns=False,
         report_to="none",
