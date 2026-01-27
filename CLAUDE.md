@@ -40,11 +40,14 @@ python train_protein_structure.py \
 
 ### Inference
 ```bash
-# Predict structure for a single sequence
+# Predict structure for a single sequence (automatic denormalization)
 python infer_protein_structure.py \
     --model_path ./output_structure \
     --sequence "MKTAYIAKQRQISFVKTIGDEVQREAPGDSRLAGHFELSC" \
     --output predicted_structure.pdb
+
+# Note: Coordinates are automatically denormalized using global stats from training_config.json
+# Output coordinates will be in Ångström units (typical range: 10-50 Å)
 ```
 
 ### Evaluation & Visualization
@@ -112,19 +115,19 @@ The reference code from the original vision-language classification task demonst
    - Outputs: protein_coords_data.json
 
 2. **create_coord_data.py**: Normalize and split data
-   - Zero-mean normalization (removes translation)
-   - Standardization (removes scale differences)
-   - Saves normalization stats for inference denormalization
-   - Outputs: coord_train.json, coord_val.json, coord_norm_stats.json
+   - Per-sample center+scale normalization (removes translation and scale differences)
+   - Saves per-sample normalization stats in each training sample
+   - Outputs: coord_train.json, coord_val.json
 
 3. **train_protein_structure.py**: Train MTP model
    - Uses LoRA for memory efficiency
-   - Saves model + training config
+   - Computes global normalization statistics from training set
+   - Saves model + training_config.json (includes global_norm_mean and global_norm_std)
 
 4. **infer_protein_structure.py**: Predict structure
-   - Loads model + LoRA weights + normalization stats
-   - Denormalizes predicted coordinates
-   - Outputs standard PDB format
+   - Loads model + LoRA weights
+   - Automatically applies denormalization using global stats from training_config.json
+   - Outputs standard PDB format with coordinates in Ångström units
 
 ### Evaluation Metrics (evaluate_structure.py)
 
@@ -139,11 +142,11 @@ The reference code from the original vision-language classification task demonst
 ## Important Implementation Details
 
 - **Batch size limitation**: Currently only batch_size=1 is supported (matching reference code). The collator explicitly asserts this.
-- **Normalization is critical**: Training uses normalized coordinates; inference requires denormalization using saved stats from coord_norm_stats.json
+- **Coordinate normalization**: Training uses per-sample center+scale normalization (`(coords - centroid) / std`). During training, global statistics are computed from the training set and saved to `training_config.json`. Inference automatically applies denormalization using these global stats to convert normalized predictions back to Ångström units.
 - **Placeholder token**: Uses `<unk>` token. Must exist in tokenizer vocabulary.
 - **Sequence length**: Must match between input sequence and coordinate array. Data preprocessing validates this.
-- **LoRA configuration**: Applied to q_proj and v_proj with r=8, alpha=16
-- **Training config**: Saved to training_config.json in output directory for reproducibility
+- **LoRA configuration**: Applied to q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj with configurable r and alpha
+- **Training config**: Saved to training_config.json in output directory, includes global normalization stats (global_norm_mean, global_norm_std) for inference denormalization
 
 ## File Organization
 

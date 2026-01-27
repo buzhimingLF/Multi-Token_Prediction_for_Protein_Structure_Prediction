@@ -364,12 +364,30 @@ def main():
     # 保存tokenizer
     tokenizer.save_pretrained(args.output_dir)
 
+    # 计算全局归一化统计量（用于推理时的反归一化）
+    print("\n计算全局归一化统计量...")
+    global_means = []
+    global_stds = []
+    for item in train_dataset.data:
+        if 'norm_stats' in item:
+            global_means.append(item['norm_stats']['mean'])
+            global_stds.append(item['norm_stats']['std'])
+
+    import numpy as np
+    global_mean_centroid = np.mean(global_means, axis=0).tolist() if global_means else [0.0, 0.0, 0.0]
+    global_mean_std = float(np.mean(global_stds)) if global_stds else 1.0
+
+    print(f"全局平均质心: [{global_mean_centroid[0]:.2f}, {global_mean_centroid[1]:.2f}, {global_mean_centroid[2]:.2f}] Å")
+    print(f"全局平均标准差: {global_mean_std:.2f} Å")
+
     # 保存训练配置
     config_to_save = {
         'model_name': args.model_name,
         'max_seq_len': args.max_seq_len,
         'lora_rank': args.lora_rank,
         'lora_alpha': args.lora_alpha,
+        'global_norm_mean': global_mean_centroid,
+        'global_norm_std': global_mean_std,
     }
     with open(os.path.join(args.output_dir, 'training_config.json'), 'w') as f:
         json.dump(config_to_save, f, indent=2)

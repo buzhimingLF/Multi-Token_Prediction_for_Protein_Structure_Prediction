@@ -258,23 +258,42 @@ def main():
     pred_coords = predict_structure(model, tokenizer, args.sequence, args.device)
 
     print(f"预测完成! 坐标形状: {pred_coords.shape}")
+    print(f"归一化坐标范围: [{pred_coords.min():.3f}, {pred_coords.max():.3f}]")
 
-    # 反归一化(如果需要)
+    # 反归一化
+    # 优先使用命令行参数，否则使用配置文件中的全局统计量
     if args.norm_mean is not None and args.norm_std is not None:
-        print("反归一化坐标...")
+        print("\n使用命令行参数进行反归一化...")
         norm_stats = {
             'mean': args.norm_mean,
             'std': args.norm_std
         }
         pred_coords = denormalize_coords(pred_coords, norm_stats)
+    elif 'global_norm_mean' in config and 'global_norm_std' in config:
+        print("\n使用全局统计量进行反归一化...")
+        norm_stats = {
+            'mean': config['global_norm_mean'],
+            'std': config['global_norm_std']
+        }
+        print(f"  全局平均质心: [{norm_stats['mean'][0]:.2f}, {norm_stats['mean'][1]:.2f}, {norm_stats['mean'][2]:.2f}] Å")
+        print(f"  全局平均标准差: {norm_stats['std']:.2f} Å")
+        pred_coords = denormalize_coords(pred_coords, norm_stats)
+    else:
+        print("\n警告: 未找到归一化参数，坐标将保持归一化状态（以原点为中心）")
+        print("提示: 如需反归一化，可使用 --norm_mean 和 --norm_std 参数")
 
     # 保存为PDB
     save_as_pdb(args.sequence, pred_coords, args.output)
 
     # 显示前3个坐标
-    print("\n前3个Cα坐标:")
+    print("\n前3个Cα坐标 (Å):")
     for i, coord in enumerate(pred_coords[:3], start=1):
         print(f"  {i}: [{coord[0]:8.3f}, {coord[1]:8.3f}, {coord[2]:8.3f}]")
+
+    print(f"\n坐标统计:")
+    print(f"  X: [{pred_coords[:, 0].min():.2f}, {pred_coords[:, 0].max():.2f}] Å")
+    print(f"  Y: [{pred_coords[:, 1].min():.2f}, {pred_coords[:, 1].max():.2f}] Å")
+    print(f"  Z: [{pred_coords[:, 2].min():.2f}, {pred_coords[:, 2].max():.2f}] Å")
 
 
 if __name__ == '__main__':

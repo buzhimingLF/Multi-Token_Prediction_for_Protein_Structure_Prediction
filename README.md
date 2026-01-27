@@ -126,17 +126,11 @@ python3 data_preprocessing.py --extract_coords --max_samples 1000
 python3 create_coord_data.py --max_seq_len 512
 ```
 
-**重要说明**:
-- `data_preprocessing.py` 已改进为无需INDEX索引文件，可直接扫描P-L目录
-- 自动扫描 1981-2000, 2001-2010, 2011-2019 三个年份范围
-- 坐标自动归一化（零均值+标准化），归一化参数保存在每个样本的 `norm_stats` 字段
-- 如遇到PDB文件权限问题，运行: `find P-L/ -name "*.pdb" -type f -exec chmod 644 {} +`
-
 ### 训练模型
 
 ```bash
 # 使用Qwen2.5-0.5B训练
-python train_protein_structure.py \
+python3 train_protein_structure.py \
     --train_data coord_train.json \
     --val_data coord_val.json \
     --model_name Qwen/Qwen2.5-0.5B \
@@ -149,24 +143,33 @@ python train_protein_structure.py \
 ### 推理预测
 
 ```bash
-# 预测单个序列的结构
-python infer_protein_structure.py \
+# 预测单个序列的结构（自动反归一化）
+python3 infer_protein_structure.py \
     --model_path ./output_structure \
     --sequence "MKTAYIAKQRQISFVKTIGDEVQREAPGDSRLAGHFELSC" \
     --output predicted_structure.pdb
+
+# 注：模型会自动使用训练时的全局归一化统计量进行反归一化
+# 如需自定义归一化参数，可使用：
+# python3 infer_protein_structure.py \
+#     --model_path ./output_structure \
+#     --sequence "..." \
+#     --norm_mean 16.75 19.87 24.65 \
+#     --norm_std 10.53 \
+#     --output predicted_structure.pdb
 ```
 
 ### 评估与可视化
 
 ```bash
 # 评估预测结果(与真实结构对比)
-python evaluate_structure.py \
+python3 evaluate_structure.py \
     --pred predicted_structure.pdb \
     --true true_structure.pdb \
     --all_metrics
 
 # 可视化结构
-python visualize_structure.py \
+python3 visualize_structure.py \
     --pdb predicted_structure.pdb \
     --output structure_viz.png \
     --mode both \
