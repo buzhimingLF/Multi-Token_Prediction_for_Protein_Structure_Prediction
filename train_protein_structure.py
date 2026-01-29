@@ -6,6 +6,11 @@ ProteinMTP 训练脚本 - 坐标回归版本
 - 使用 placeholder tokens 限定输出长度为 k=序列长度
 - 输出从分类logits改为坐标 (x,y,z)
 - 损失函数从分类损失改为MSE回归损失
+
+支持的模型规模：
+- Qwen2.5-0.5B: 适合快速验证，CPU/GPU均可
+- Qwen2.5-1.5B: 中等规模，需要GPU
+- Qwen2.5-7B: 大规模，需要GPU + 梯度检查点 + 混合精度
 """
 
 import torch
@@ -19,13 +24,27 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     Trainer,
-    TrainingArguments
+    TrainingArguments,
+    BitsAndBytesConfig
 )
 from torch.utils.data import Dataset
 from peft import LoraConfig, TaskType, get_peft_model
 from tqdm import tqdm
 
 warnings.filterwarnings('ignore')
+
+# 检测GPU可用性
+def get_device_info():
+    """获取设备信息"""
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+        gpu_name = torch.cuda.get_device_name(0)
+        gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1024**3
+        print(f"GPU 检测: {gpu_name} ({gpu_memory:.1f} GB)")
+        return device, gpu_memory
+    else:
+        print("GPU 不可用，使用 CPU")
+        return torch.device('cpu'), 0
 
 
 class ProteinCoordDataset(Dataset):
@@ -142,6 +161,16 @@ class ProteinStructureMTP(nn.Module):
 
         # 坐标预测头：将特征映射到 3D 坐标
         self.coord_head = nn.Linear(hidden_size, 3)
+
+    def gradient_checkpointing_enable(self, gradient_checkpointing_kwargs=None):
+        """启用梯度检查点（委托给base_model）"""
+        if hasattr(self.base_model, 'gradient_checkpointing_enable'):
+            self.base_model.gradient_checkpointing_enable(gradient_checkpointing_kwargs)
+
+    def gradient_checkpointing_disable(self):
+        """禁用梯度检查点（委托给base_model）"""
+        if hasattr(self.base_model, 'gradient_checkpointing_disable'):
+            self.base_model.gradient_checkpointing_disable()
 
     def compute_rmsd(self, pred_coords, true_coords):
         """
@@ -262,6 +291,14 @@ def main():
     parser.add_argument('--lora_alpha', type=int, default=32)
     parser.add_argument('--output_dir', type=str, default='./output_structure')
 
+    # 大模型优化参数
+    parser.add_argument('--gradient_checkpointing', action='store_true',
+                        help='启用梯度检查点以节省显存（推荐7B模型使用）')
+    parser.add_argument('--use_4bit', action='store_true',
+                        help='使用4bit量化加载模型（极端显存优化）')
+    parser.add_argument('--gradient_accumulation_steps', type=int, default=4,
+                        help='梯度累积步数（大模型建议增加）')
+
     args = parser.parse_args()
 
     print("=" * 60)
@@ -271,20 +308,77 @@ def main():
     print(f"最大序列长度: {args.max_seq_len}")
     print(f"批次大小: {args.batch_size}")
     print(f"学习率: {args.learning_rate}")
+    print(f"梯度累积步数: {args.gradient_accumulation_steps}")
+    print(f"梯度检查点: {'启用' if args.gradient_checkpointing else '禁用'}")
+    print(f"4bit量化: {'启用' if args.use_4bit else '禁用'}")
     print()
 
+    # 检测设备
+    device, gpu_memory = get_device_info()
+
+    # 根据模型大小自动调整配置
+    model_size = args.model_name.lower()
+    if '7b' in model_size or '8b' in model_size:
+        print("\n检测到大模型(7B+)，自动启用优化...")
+        if not args.gradient_checkpointing:
+            args.gradient_checkpointing = True
+            print("  - 自动启用梯度检查点")
+        if args.gradient_accumulation_steps < 8:
+            args.gradient_accumulation_steps = 8
+            print(f"  - 自动增加梯度累积步数到 {args.gradient_accumulation_steps}")
+        # 7B模型建议使用更小的LoRA rank以节省显存
+        if args.lora_rank > 8 and gpu_memory < 24:
+            args.lora_rank = 8
+            args.lora_alpha = 16
+            print(f"  - 自动调整LoRA rank到 {args.lora_rank}")
+
     # 加载 tokenizer 和模型
-    print("加载模型...")
+    print("\n加载模型...")
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # 使用float32避免CPU上BFloat16的兼容性问题
+    # 配置模型加载参数
+    model_kwargs = {
+        'trust_remote_code': True,
+    }
+
+    # 设置数据类型
+    if torch.cuda.is_available():
+        # GPU: 使用bf16或fp16
+        if torch.cuda.is_bf16_supported():
+            model_kwargs['torch_dtype'] = torch.bfloat16
+            print("使用 BFloat16 精度")
+        else:
+            model_kwargs['torch_dtype'] = torch.float16
+            print("使用 Float16 精度")
+    else:
+        # CPU: 使用float32
+        model_kwargs['torch_dtype'] = torch.float32
+        print("使用 Float32 精度 (CPU)")
+
+    # 4bit量化配置（极端显存优化）
+    if args.use_4bit and torch.cuda.is_available():
+        print("启用 4bit 量化...")
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16,
+            bnb_4bit_use_double_quant=True,
+        )
+        model_kwargs['quantization_config'] = bnb_config
+
     base_model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
-        torch_dtype=torch.float32,
-        trust_remote_code=True
+        **model_kwargs
     )
+
+    # 启用梯度检查点（大模型必需）
+    if args.gradient_checkpointing:
+        print("启用梯度检查点...")
+        base_model.gradient_checkpointing_enable()
+        # 需要设置use_cache=False
+        base_model.config.use_cache = False
 
     # 应用 LoRA（参考师兄代码）
     print("应用 LoRA...")
@@ -335,10 +429,15 @@ def main():
         eval_steps=500 if val_dataset else None,
         bf16=use_bf16,
         fp16=use_fp16,
-        gradient_accumulation_steps=4,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
         remove_unused_columns=False,
         report_to="none",
         save_safetensors=False,  # 避免共享权重导致的保存错误
+        gradient_checkpointing=args.gradient_checkpointing,
+        # 优化器配置
+        optim="adamw_torch" if not args.use_4bit else "paged_adamw_8bit",
+        # 显存优化
+        dataloader_pin_memory=True if torch.cuda.is_available() else False,
     )
 
     # 创建训练器

@@ -176,8 +176,27 @@ The reference code from the original vision-language classification task demonst
 
 ## Technical Context
 
-**Base Model**: Qwen/Qwen2.5-0.5B (can use larger models like Qwen-1.8B, Qwen-7B)
-- Could also consider ESM-2 (protein-specific pretrained model)
+**Base Model**: Supports multiple Qwen models:
+- Qwen/Qwen2.5-0.5B: Quick validation, CPU/GPU
+- Qwen/Qwen3-4B: Medium scale
+- Qwen/Qwen3-8B: **Recommended for formal training** (requires GPU + gradient checkpointing)
+
+**8B Model Training** (RTX 3090 24GB):
+```bash
+python train_protein_structure.py \
+    --model_name Qwen/Qwen3-8B \
+    --gradient_checkpointing \
+    --gradient_accumulation_steps 8 \
+    --lora_rank 8 \
+    --lora_alpha 16 \
+    --learning_rate 5e-5 \
+    ...
+```
+
+**Memory Optimization Options**:
+- `--gradient_checkpointing`: Reduces memory by recomputing activations
+- `--use_4bit`: 4-bit quantization for extreme memory savings
+- `--gradient_accumulation_steps N`: Increase to reduce per-step memory
 
 **Dataset**: PDBbind-Plus (protein-ligand binding data)
 - Download to P-L/ directory
@@ -185,6 +204,7 @@ The reference code from the original vision-language classification task demonst
 
 **Key Libraries**:
 - torch, transformers, peft (LoRA), accelerate
+- bitsandbytes (for 4bit quantization)
 - numpy, matplotlib for data/visualization
 
 **Training Strategy**:
@@ -192,6 +212,7 @@ The reference code from the original vision-language classification task demonst
 - MSE loss for coordinate regression
 - RMSD as evaluation metric during training
 - Max sequence length: 512 (configurable)
+- Automatic GPU detection and dtype selection (bf16/fp16 on GPU, fp32 on CPU)
 
 ## Development Notes
 
@@ -229,11 +250,41 @@ pip3 uninstall -y scikit-learn && pip3 install --no-cache-dir scikit-learn
 AutoModelForCausalLM.from_pretrained(model_name, torch_dtype=torch.float32, ...)
 ```
 
-### 5. Mixed Dtype in Training
-**Problem**: `RuntimeError: mat1 and mat2 must have the same dtype, but got BFloat16 and Float`
-**Solution**: Ensure custom layers match base model dtype:
-```python
-model_dtype = next(base_model.parameters()).dtype
-model.coord_proj = model.coord_proj.to(dtype=model_dtype)
-model.coord_head = model.coord_head.to(dtype=model_dtype)
+### 6. CUDA Driver Version Incompatibility
+**Problem**: `CUDA initialization: The NVIDIA driver on your system is too old`
+**Solution**: Install PyTorch version compatible with your CUDA driver:
+```bash
+# Check CUDA version: nvidia-smi
+# For CUDA 11.4 (driver 470.x), use:
+pip install torch==2.0.1+cu118 --index-url https://download.pytorch.org/whl/cu118
+```
+
+### 7. Out of Memory (OOM) with Large Models
+**Problem**: GPU runs out of memory when training 8B model
+**Solution**: Enable memory optimizations:
+```bash
+python train_protein_structure.py \
+    --model_name Qwen/Qwen3-8B \
+    --gradient_checkpointing \
+    --gradient_accumulation_steps 16 \
+    --use_4bit \
+    ...
+```
+
+### 8. Disk Space Insufficient for Large Models
+**Problem**: 8B model requires ~17GB disk space for download, root partition may be too small
+**Solution**: Move HuggingFace cache to a larger disk:
+```bash
+# Create cache directory on large disk
+mkdir -p /mnt/data/huggingface_cache
+
+# Move existing cache and create symlink
+mv ~/.cache/huggingface/* /mnt/data/huggingface_cache/
+rm -rf ~/.cache/huggingface
+ln -s /mnt/data/huggingface_cache ~/.cache/huggingface
+
+# Optionally, also use large disk for training output
+python train_protein_structure.py \
+    --output_dir /mnt/data/protein_mtp_output/output_structure_8b \
+    ...
 ```

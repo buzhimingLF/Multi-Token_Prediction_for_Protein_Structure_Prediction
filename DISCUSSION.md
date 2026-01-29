@@ -1,6 +1,6 @@
 # ProteinMTP 项目进度与讨论
 
-**日期**：2026-01-24
+**日期**：2026-01-29
 **作者**：黄海军
 **GitHub**：git@github.com:buzhimingLF/ProteinMTP---Multi-Token-Prediction-for-Protein-Sequence-Generation.git
 
@@ -36,10 +36,10 @@
 - [x] 代码改造（分类任务 -> 坐标回归任务）
 - [x] 数据预处理流程设计（提取原子坐标）
 - [x] Phase 1可行性验证：小规模训练测试通过
+- [x] Phase 2正式训练：Qwen3-8B + GPU训练完成
 
 **进行中**
-- [ ] Phase 2基线实验：正式训练（更多epochs，更大数据集）
-- [ ] 模型评估与优化
+- [ ] 模型评估与优化（需要更大内存机器）
 
 **待开始**
 - [ ] Phase 3优化与扩展
@@ -62,6 +62,69 @@
 - ✅ 坐标自动反归一化（恢复到Å单位）
 - ✅ PDB文件输出正常
 - ✅ 可视化功能正常
+
+### Phase 2 正式训练结果 (2026-01-29)
+
+**训练配置**：
+- 模型：Qwen3-8B（从 Qwen2.5-7B 升级）
+- GPU：RTX 3090 (24GB)
+- 数据：2876 训练样本，320 验证样本
+- 训练轮数：3 epochs (1077 steps)
+- 优化：梯度检查点 + LoRA (r=8, alpha=16) + BFloat16
+- 训练时间：约 1 小时 28 分钟
+
+**训练结果**：
+- ✅ 训练完成，Loss 正常下降
+- ✅ 模型保存成功 (16GB)
+- ✅ 全局归一化统计已保存
+- 保存路径：`/mnt/data/protein_mtp_output/output_structure_8b/`
+
+**推理内存需求**：
+- 8B 模型需要约 32GB 内存（CPU+GPU 总计）
+- 当前服务器（31GB RAM + 24GB VRAM）勉强够用
+- 建议使用 4bit 量化或更大内存机器进行推理
+
+**代码更新**：
+- ✅ 升级 transformers 到 4.51.0（支持 Qwen3）
+- ✅ 升级 PyTorch 到 2.2.0（支持新 transformers）
+- ✅ 修复 ProteinStructureMTP 类的 gradient_checkpointing 方法
+- ✅ 更新 CLAUDE.md 和 README.md 文档
+
+---
+
+### Phase 2 正式训练计划 (2026-01-28)
+
+**目标**：使用7B大模型进行正式训练
+
+**配置**：
+- 模型：Qwen/Qwen2.5-7B
+- GPU：RTX 3090 (24GB)
+- 数据：5000个蛋白质样本
+- 训练轮数：3 epochs
+- 优化：梯度检查点 + LoRA + 混合精度
+
+**训练命令**：
+```bash
+python3 train_protein_structure.py \
+    --train_data coord_train.json \
+    --val_data coord_val.json \
+    --model_name Qwen/Qwen2.5-7B \
+    --max_seq_len 512 \
+    --num_epochs 3 \
+    --learning_rate 5e-5 \
+    --lora_rank 8 \
+    --lora_alpha 16 \
+    --gradient_checkpointing \
+    --gradient_accumulation_steps 8 \
+    --output_dir ./output_structure_7b
+```
+
+**代码更新**：
+- ✅ 添加 `--gradient_checkpointing` 参数
+- ✅ 添加 `--use_4bit` 4bit量化支持
+- ✅ 添加 `--gradient_accumulation_steps` 参数
+- ✅ 自动检测GPU并选择最佳dtype
+- ✅ 大模型自动优化配置
 
 ---
 

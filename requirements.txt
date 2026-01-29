@@ -1,10 +1,17 @@
 # ProteinMTP 依赖包
 
 # 核心依赖
+# 注意：需要安装与CUDA驱动兼容的PyTorch版本
+# CUDA 11.7: pip install torch==2.0.1+cu117 --index-url https://download.pytorch.org/whl/cu117
+# CUDA 11.8: pip install torch==2.0.1+cu118 --index-url https://download.pytorch.org/whl/cu118
+# CUDA 12.1: pip install torch>=2.1.0
 torch>=2.0.0
-transformers>=4.30.0
-peft>=0.4.0
-accelerate>=0.20.0
+transformers>=4.40.0
+peft>=0.10.0
+accelerate>=0.28.0
+
+# 4bit量化支持(可选，用于极端显存优化)
+bitsandbytes>=0.41.0
 
 # 数据处理
 numpy>=1.24.0

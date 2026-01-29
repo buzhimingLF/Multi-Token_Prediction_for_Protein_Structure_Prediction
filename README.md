@@ -53,10 +53,10 @@ MTP通过placeholder tokens实现定长输出：
 ## 技术栈
 
 - Python 3.8+
-- PyTorch
+- PyTorch (CUDA 11.8+)
 - Transformers (Hugging Face)
 - PEFT (LoRA微调)
-- DeepSpeed (可选)
+- bitsandbytes (4bit量化，可选)
 
 ## 项目结构
 
@@ -72,31 +72,17 @@ ProteinMTP/
 ├── data_preprocessing.py          # 数据预处理：提取序列+坐标
 ├── create_coord_data.py           # 数据准备：归一化、划分数据集
 │
-├── train_protein_structure.py    # ✅ 训练脚本：坐标回归
-├── infer_protein_structure.py    # ✅ 推理脚本：结构预测
-├── evaluate_structure.py          # ✅ 评估脚本：RMSD/TM-score等
-├── visualize_structure.py         # ✅ 可视化脚本：3D/2D结构图
+├── train_protein_structure.py    # 训练脚本：坐标回归
+├── infer_protein_structure.py    # 推理脚本：结构预测
+├── evaluate_structure.py          # 评估脚本：RMSD/TM-score等
+├── visualize_structure.py         # 可视化脚本：3D/2D结构图
 │
-├── train_protein_mtp.py           # ⚠️ 旧版本(标准MTP),不推荐使用
+├── output_structure/              # 训练输出目录
+│   ├── model.pt                   # 模型权重
+│   ├── training_config.json       # 训练配置
+│   └── ...
 └── ...
 ```
-
-**核心文件说明**：
-
-| 文件 | 作用 | 状态 |
-|-----|------|------|
-| `SFT_main.py` | 师兄的参考代码(分类任务) | ✅ 参考 |
-| `data_preprocessing.py` | 从PDB提取序列和坐标 | ✅ 完成 |
-| `create_coord_data.py` | 创建训练数据集(归一化、划分) | ✅ 完成 |
-| `train_protein_structure.py` | 训练坐标回归模型 | ✅ 推荐 |
-| `infer_protein_structure.py` | 预测蛋白质结构(生成PDB) | ✅ 新增 |
-| `evaluate_structure.py` | 评估预测结果(RMSD/TM-score) | ✅ 新增 |
-| `visualize_structure.py` | 可视化结构(3D/2D投影) | ✅ 新增 |
-
-**关键组件**：
-- `LabelWiseAttention`: 将placeholder tokens映射到输出位置
-- `ProteinStructureMTP`: MTP模型,输出(B, seq_len, 3)坐标
-- RMSD评估指标: 蛋白质结构预测的标准指标
 
 ## 快速开始
 
@@ -109,27 +95,41 @@ cd ProteinMTP
 # 安装依赖
 pip install -r requirements.txt
 
-# 或手动安装核心依赖
-pip install torch transformers peft accelerate numpy matplotlib
+# GPU用户：确保安装CUDA兼容的PyTorch
+# 查看CUDA版本: nvidia-smi
+# 安装对应版本的PyTorch: https://pytorch.org/get-started/locally/
 ```
 
 ### 数据准备
 
 ```bash
 # 1. 从 PDBbind-Plus 下载数据集到 P-L/ 目录
-https://www.pdbbind-plus.org.cn/download
-Demo: PDBbind v2020.R1 ->Index files 和 Protein-ligand complex structures
+# https://www.pdbbind-plus.org.cn/download
+# Demo: PDBbind v2020.R1 -> Index files 和 Protein-ligand complex structures
+
 # 2. 提取序列和坐标
-python3 data_preprocessing.py --extract_coords --max_samples 1000
+python3 data_preprocessing.py --extract_coords --max_samples 5000
 
 # 3. 创建训练数据集
 python3 create_coord_data.py --max_seq_len 512
 ```
 
-### 训练模型
+---
 
+## 正式训练指南
+
+### 模型选择
+
+| 模型 | 参数量 | 显存需求 | 推荐场景 |
+|-----|--------|---------|---------|
+| Qwen2.5-0.5B | 0.5B | ~4GB | 快速验证、CPU可用 |
+| Qwen3-4B | 4B | ~10GB | 中等规模实验 |
+| **Qwen3-8B** | 8B | ~18-22GB | **正式训练（推荐）** |
+
+### 训练命令
+
+#### 小模型快速验证 (0.5B)
 ```bash
-# 使用Qwen2.5-0.5B训练
 python3 train_protein_structure.py \
     --train_data coord_train.json \
     --val_data coord_val.json \
@@ -137,32 +137,74 @@ python3 train_protein_structure.py \
     --max_seq_len 512 \
     --num_epochs 3 \
     --learning_rate 1e-4 \
-    --output_dir ./output_structure
+    --output_dir ./output_structure_0.5b
 ```
 
-### 推理预测
+#### 正式训练 (8B) - 推荐
+```bash
+# RTX 3090 (24GB) 推荐配置
+python3 train_protein_structure.py \
+    --train_data coord_train.json \
+    --val_data coord_val.json \
+    --model_name Qwen/Qwen3-8B \
+    --max_seq_len 512 \
+    --num_epochs 3 \
+    --learning_rate 5e-5 \
+    --lora_rank 8 \
+    --lora_alpha 16 \
+    --gradient_checkpointing \
+    --gradient_accumulation_steps 8 \
+    --output_dir ./output_structure_8b
+```
+
+#### 极端显存优化 (4bit量化)
+```bash
+# 显存不足时使用4bit量化
+python3 train_protein_structure.py \
+    --train_data coord_train.json \
+    --val_data coord_val.json \
+    --model_name Qwen/Qwen3-8B \
+    --max_seq_len 512 \
+    --num_epochs 3 \
+    --learning_rate 5e-5 \
+    --gradient_checkpointing \
+    --use_4bit \
+    --gradient_accumulation_steps 16 \
+    --output_dir ./output_structure_8b_4bit
+```
+
+### 训练参数说明
+
+| 参数 | 说明 | 默认值 |
+|-----|------|--------|
+| `--model_name` | 基础模型名称 | Qwen/Qwen2.5-0.5B |
+| `--max_seq_len` | 最大序列长度 | 512 |
+| `--num_epochs` | 训练轮数 | 3 |
+| `--learning_rate` | 学习率 | 1e-4 |
+| `--lora_rank` | LoRA秩 | 16 |
+| `--lora_alpha` | LoRA alpha | 32 |
+| `--gradient_checkpointing` | 启用梯度检查点 | False |
+| `--use_4bit` | 使用4bit量化 | False |
+| `--gradient_accumulation_steps` | 梯度累积步数 | 4 |
+
+---
+
+## 推理预测
 
 ```bash
 # 预测单个序列的结构（自动反归一化）
 python3 infer_protein_structure.py \
-    --model_path ./output_structure \
+    --model_path ./output_structure_8b \
     --sequence "MKTAYIAKQRQISFVKTIGDEVQREAPGDSRLAGHFELSC" \
     --output predicted_structure.pdb
-
-# 注：模型会自动使用训练时的全局归一化统计量进行反归一化
-# 如需自定义归一化参数，可使用：
-# python3 infer_protein_structure.py \
-#     --model_path ./output_structure \
-#     --sequence "..." \
-#     --norm_mean 16.75 19.87 24.65 \
-#     --norm_std 10.53 \
-#     --output predicted_structure.pdb
 ```
 
-### 评估与可视化
+---
+
+## 评估与可视化
 
 ```bash
-# 评估预测结果(与真实结构对比)
+# 评估预测结果
 python3 evaluate_structure.py \
     --pred predicted_structure.pdb \
     --true true_structure.pdb \
@@ -176,50 +218,132 @@ python3 visualize_structure.py \
     --stats
 ```
 
-## 完整工作流程
+---
 
-### 1. 数据准备流程
+## 模型上传与分享
+
+### 方法1: Git LFS (推荐小于2GB的模型)
+
 ```bash
-# Step 1: 提取坐标数据(需要先下载PDBbind数据集)
-python data_preprocessing.py --extract_coords --max_samples 1000
+# 1. 安装Git LFS
+git lfs install
 
-# Step 2: 创建训练数据集
-python create_coord_data.py --max_seq_len 512 --train_ratio 0.9
+# 2. 追踪大文件
+git lfs track "*.pt"
+git lfs track "*.bin"
+git lfs track "*.safetensors"
+
+# 3. 添加并提交
+git add .gitattributes
+git add output_structure_8b/
+git commit -m "添加8B模型权重"
+git push origin main
 ```
 
-### 2. 模型训练流程
+### 方法2: Hugging Face Hub (推荐大模型)
+
 ```bash
-# 训练模型
-python train_protein_structure.py \
-    --train_data coord_train.json \
-    --val_data coord_val.json \
-    --model_name Qwen/Qwen2.5-0.5B \
-    --max_seq_len 512 \
-    --num_epochs 3 \
-    --output_dir ./output_structure
+# 1. 安装huggingface_hub
+pip install huggingface-hub
+
+# 2. 登录
+huggingface-cli login
+
+# 3. 上传模型
+python3 -c "
+from huggingface_hub import HfApi
+api = HfApi()
+api.upload_folder(
+    folder_path='./output_structure_8b',
+    repo_id='your-username/ProteinMTP-8B',
+    repo_type='model'
+)
+"
 ```
 
-### 3. 推理与评估流程
-```bash
-# Step 1: 预测结构
-python infer_protein_structure.py \
-    --model_path ./output_structure \
-    --sequence "MKTAYIAKQRQISFVKTIGDEVQREAPGDSRLAGHFELSC" \
+### 方法3: 云盘分享
+
+将 `output_structure_8b/` 文件夹打包上传到：
+- 百度网盘
+- 阿里云盘
+- Google Drive
+
+---
+
+## Windows本地使用
+
+### 1. 环境配置
+
+```powershell
+# 创建虚拟环境
+python -m venv venv
+.\venv\Scripts\activate
+
+# 安装依赖
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+pip install transformers peft accelerate numpy matplotlib
+```
+
+### 2. 下载模型
+
+**方法A: 从Git仓库克隆**
+```powershell
+git lfs install
+git clone https://github.com/buzhimingLF/ProteinMTP---Multi-Token-Prediction-for-Protein-Sequence-Generation.git
+cd ProteinMTP---Multi-Token-Prediction-for-Protein-Sequence-Generation
+```
+
+**方法B: 从Hugging Face下载**
+```python
+from huggingface_hub import snapshot_download
+snapshot_download(
+    repo_id="your-username/ProteinMTP-8B",
+    local_dir="./output_structure_8b"
+)
+```
+
+**方法C: 从云盘下载**
+下载后解压到项目的 `output_structure_8b/` 目录
+
+### 3. 运行推理
+
+```powershell
+python infer_protein_structure.py ^
+    --model_path ./output_structure_8b ^
+    --sequence "MKTAYIAKQRQISFVKTIGDEVQREAPGDSRLAGHFELSC" ^
     --output predicted.pdb
-
-# Step 2: 可视化
-python visualize_structure.py \
-    --pdb predicted.pdb \
-    --output structure.png \
-    --mode both \
-    --stats
-
-# Step 3: 评估(如果有真实结构)
-python evaluate_structure.py \
-    --pred predicted.pdb \
-    --true true_structure.pdb \
-    --all_metrics
 ```
+
+### 4. 可视化结果
+
+```powershell
+python visualize_structure.py ^
+    --pdb predicted.pdb ^
+    --output structure.png ^
+    --mode both ^
+    --stats
+```
+
+---
+
+## 评估指标参考
+
+### RMSD (Root Mean Square Deviation)
+- < 2.0 Å: 高质量预测
+- 2.0-5.0 Å: 中等质量
+- > 5.0 Å: 低质量
+
+### TM-score
+- > 0.5: 相同折叠
+- 0.4-0.5: 相似折叠
+- < 0.4: 不同折叠
+
+### GDT-TS
+- > 50: 高质量
+- 30-50: 中等质量
+- < 30: 低质量
+
+---
 
 ## 实验进度
 
@@ -229,14 +353,69 @@ python evaluate_structure.py \
 - [x] 代码改造（分类 -> 坐标回归）
 - [x] 数据预处理（提取原子坐标）
 - [x] 推理和评估脚本
-- [ ] 基线实验
-- [ ] 正式实验
+- [x] Phase 1 验证实验 (0.5B)
+- [x] Phase 2 正式训练 (Qwen3-8B) ✅ 完成
+- [ ] 模型评估与优化
 - [ ] 论文撰写
+
+## 常见问题
+
+### Q: GPU显存不足怎么办？
+A: 尝试以下方法：
+1. 使用 `--gradient_checkpointing` 启用梯度检查点
+2. 使用 `--use_4bit` 启用4bit量化
+3. 增加 `--gradient_accumulation_steps` 减少每步显存占用
+4. 减小 `--max_seq_len` 限制序列长度
+
+### Q: CUDA版本不兼容怎么办？
+A: 安装与驱动兼容的PyTorch版本：
+```bash
+# 查看CUDA版本
+nvidia-smi
+
+# 安装对应版本
+# CUDA 11.8: pip install torch==2.0.1+cu118 --index-url https://download.pytorch.org/whl/cu118
+# CUDA 12.1: pip install torch==2.1.0+cu121 --index-url https://download.pytorch.org/whl/cu121
+```
+
+### Q: 训练时出现NaN loss怎么办？
+A: 可能的解决方案：
+1. 降低学习率（如从1e-4降到5e-5）
+2. 检查数据是否有异常值
+3. 使用gradient clipping
+
+### Q: 磁盘空间不足怎么办？
+A: 8B模型需要约17GB空间下载，可以将HuggingFace缓存移到大磁盘：
+```bash
+# 1. 创建大磁盘上的缓存目录
+mkdir -p /mnt/data/huggingface_cache
+
+# 2. 移动现有缓存
+mv ~/.cache/huggingface/* /mnt/data/huggingface_cache/
+
+# 3. 创建软链接
+rm -rf ~/.cache/huggingface
+ln -s /mnt/data/huggingface_cache ~/.cache/huggingface
+
+# 4. 验证
+ls -la ~/.cache/huggingface
+```
+
+同样可以将训练输出目录指向大磁盘：
+```bash
+python3 train_protein_structure.py \
+    --output_dir /mnt/data/protein_mtp_output/output_structure_8b \
+    ...
+```
+
+---
 
 ## 文档
 
 - [需求文档](./start.md)
 - [讨论文档](./DISCUSSION.md)
+- [项目总结](./PROJECT_SUMMARY.md)
+- [Claude Code指南](./CLAUDE.md)
 
 ## License
 
@@ -245,3 +424,4 @@ MIT License
 ---
 
 *本项目为毕业论文研究项目*
+*最后更新: 2026-01-29*

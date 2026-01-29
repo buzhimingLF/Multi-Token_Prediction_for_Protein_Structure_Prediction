@@ -21,13 +21,14 @@ from peft import PeftModel
 from train_protein_structure import LabelWiseAttention, ProteinStructureMTP
 
 
-def load_model(model_path: str, device: str = 'cuda'):
+def load_model(model_path: str, device: str = 'cuda', use_4bit: bool = False):
     """
     加载训练好的模型
 
     Args:
         model_path: 模型路径
         device: 设备 ('cuda' or 'cpu')
+        use_4bit: 是否使用4bit量化
 
     Returns:
         (model, tokenizer, config) 元组
@@ -59,15 +60,66 @@ def load_model(model_path: str, device: str = 'cuda'):
     model_pt_path = os.path.join(model_path, 'model.pt')
 
     if os.path.exists(model_pt_path):
-        # 新格式：直接加载model.pt
+        # 新格式：直接加载model.pt（包含完整模型）
         print("使用新格式加载模型（model.pt）")
 
-        # 加载基础模型
-        base_model = AutoModelForCausalLM.from_pretrained(
-            config['model_name'],
-            torch_dtype=torch.float32,
-            trust_remote_code=True
-        )
+        # 检测设备并选择dtype
+        if use_4bit:
+            print("使用 4bit 量化")
+            from transformers import BitsAndBytesConfig
+            bnb_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_use_double_quant=True,
+                bnb_4bit_quant_type="nf4"
+            )
+            model_dtype = torch.bfloat16
+
+            # 4bit模型必须在GPU上
+            print("加载4bit量化基础模型...")
+            base_model = AutoModelForCausalLM.from_pretrained(
+                config['model_name'],
+                quantization_config=bnb_config,
+                trust_remote_code=True,
+                device_map='auto'
+            )
+        elif device == 'cuda' and torch.cuda.is_available():
+            model_dtype = torch.bfloat16
+            print("使用 BFloat16 精度")
+
+            # 先加载state_dict到CPU检查大小
+            print("加载模型权重到CPU...")
+            state_dict = torch.load(model_pt_path, map_location='cpu')
+
+            # 转换dtype
+            print(f"转换为 {model_dtype}...")
+            for key in list(state_dict.keys()):
+                if state_dict[key].is_floating_point():
+                    state_dict[key] = state_dict[key].to(model_dtype)
+
+            # 加载基础模型（不占用GPU，保持在CPU）
+            print("加载基础模型架构...")
+            base_model = AutoModelForCausalLM.from_pretrained(
+                config['model_name'],
+                torch_dtype=model_dtype,
+                trust_remote_code=True,
+                low_cpu_mem_usage=True,
+                device_map='cpu'  # 强制保持在CPU
+            )
+        else:
+            model_dtype = torch.float32
+            print("使用 Float32 精度")
+
+            print("加载模型权重到CPU...")
+            state_dict = torch.load(model_pt_path, map_location='cpu')
+
+            print("加载基础模型架构...")
+            base_model = AutoModelForCausalLM.from_pretrained(
+                config['model_name'],
+                torch_dtype=model_dtype,
+                trust_remote_code=True,
+                low_cpu_mem_usage=True
+            )
 
         # 应用LoRA配置（必须与训练时相同）
         from peft import LoraConfig, TaskType, get_peft_model
@@ -84,9 +136,42 @@ def load_model(model_path: str, device: str = 'cuda'):
         # 创建MTP模型
         model = ProteinStructureMTP(base_model, max_seq_len=config['max_seq_len'])
 
-        # 加载训练好的权重
-        state_dict = torch.load(model_pt_path, map_location=device)
-        model.load_state_dict(state_dict)
+        if not use_4bit:
+            # 非4bit模式：加载训练权重
+            print("加载训练权重...")
+            model.load_state_dict(state_dict)
+            del state_dict
+            import gc
+            gc.collect()
+
+            # 移动到GPU
+            print(f"移动模型到 {device}...")
+            model = model.to(device)
+            if device == 'cuda':
+                torch.cuda.empty_cache()
+        else:
+            # 4bit模式：尝试只加载LoRA和额外层的权重
+            print("加载LoRA和额外层权重...")
+            state_dict = torch.load(model_pt_path, map_location='cpu')
+
+            # 只加载coord_proj和coord_head的权重
+            coord_state = {k: v for k, v in state_dict.items()
+                          if 'coord_proj' in k or 'coord_head' in k}
+            if coord_state:
+                model.coord_proj.load_state_dict(
+                    {k.replace('coord_proj.', ''): v for k, v in coord_state.items() if 'coord_proj' in k},
+                    strict=False
+                )
+                model.coord_head.load_state_dict(
+                    {k.replace('coord_head.', ''): v for k, v in coord_state.items() if 'coord_head' in k},
+                    strict=False
+                )
+            del state_dict
+            import gc
+            gc.collect()
+
+        model.eval()
+        return model, tokenizer, config
 
     else:
         # 旧格式：使用PeftModel加载
@@ -229,6 +314,8 @@ def main():
                         help='输出PDB文件路径')
     parser.add_argument('--device', type=str, default='cuda',
                         help='设备 (cuda/cpu)')
+    parser.add_argument('--use_4bit', action='store_true',
+                        help='使用4bit量化加载模型（减少内存）')
 
     # 归一化参数(如果训练时使用了归一化)
     parser.add_argument('--norm_mean', type=float, nargs=3, default=None,
@@ -251,7 +338,7 @@ def main():
         args.device = 'cpu'
 
     # 加载模型
-    model, tokenizer, config = load_model(args.model_path, args.device)
+    model, tokenizer, config = load_model(args.model_path, args.device, args.use_4bit)
 
     # 预测结构
     print("预测结构...")
