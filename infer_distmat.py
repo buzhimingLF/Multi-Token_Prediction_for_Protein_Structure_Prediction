@@ -168,6 +168,10 @@ def load_model(model_path: str, device: str = 'cuda', use_4bit: bool = False):
     if not use_4bit:
         model = model.to(device)
 
+    # 确保自定义层使用正确的dtype
+    model.dist_proj = model.dist_proj.to(dtype=model_dtype)
+    model.dist_head = model.dist_head.to(dtype=model_dtype)
+
     model.eval()
     return model, tokenizer, config
 
@@ -206,7 +210,8 @@ def predict_distance_matrix(model, tokenizer, sequence: str, device: str = 'cuda
     with torch.no_grad():
         pred_dist = model(input_ids, attention_mask, num_of_pl_tokens=seq_len)
 
-    return pred_dist[0].cpu().numpy()
+    # 转换为float32再转numpy (bfloat16不支持numpy)
+    return pred_dist[0].float().cpu().numpy()
 
 
 def main():
