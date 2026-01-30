@@ -2,6 +2,29 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## ⚠️ IMPORTANT NOTES
+
+### Model Selection
+- **Current project uses Qwen3-8B for 8B model training** (NOT Qwen2.5-8B)
+- Small model testing: Qwen2.5-0.5B ✅
+- Production training: **Qwen/Qwen3-8B** ✅
+- See DISCUSSION.md Phase 2 for details
+
+### Project Structure (Updated 2026-01-30)
+```
+scripts/
+  ├── training/          # All training scripts
+  ├── inference/         # All inference scripts
+  ├── data_processing/   # Data preparation
+  └── evaluation/        # Evaluation tools
+docs/
+  ├── reports/           # Experiment reports
+  └── planning/          # Planning docs
+```
+
+All Python scripts have been moved to `scripts/` subdirectories.
+Use: `python scripts/training/train_distmat.py` instead of `python train_distmat.py`
+
 ## Project Overview
 
 **ProteinMTP** applies Multi-Token Prediction (MTP) to protein structure prediction. The core innovation is using MTP to transform LLM output into a fixed-length format where k=sequence_length, enabling direct coordinate regression rather than string generation.
@@ -194,14 +217,16 @@ The reference code from the original vision-language classification task demonst
 **Base Model**: Supports multiple Qwen models:
 - Qwen/Qwen2.5-0.5B: Quick validation, CPU/GPU
 - Qwen/Qwen3-4B: Medium scale
-- Qwen/Qwen3-8B: **Recommended for formal training** (requires GPU + gradient checkpointing)
+- **Qwen/Qwen3-8B**: **Recommended for formal training** (NOT Qwen2.5-8B!)
+  - Note: Use Qwen3-8B, not Qwen2.5-8B or Qwen2.5-7B
+  - Requires GPU + gradient checkpointing
 
-**8B Model Training** (RTX 3090 24GB):
+**8B Model Training** (RTX 4090 24GB / RTX 3090 24GB):
 ```bash
-python train_protein_structure.py \
+python scripts/training/train_distmat.py \
     --model_name Qwen/Qwen3-8B \
     --gradient_checkpointing \
-    --gradient_accumulation_steps 8 \
+    --gradient_accumulation_steps 16 \
     --lora_rank 8 \
     --lora_alpha 16 \
     --learning_rate 5e-5 \
