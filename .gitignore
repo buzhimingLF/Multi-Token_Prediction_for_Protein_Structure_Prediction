@@ -53,3 +53,7 @@ output_structure/
 output_*/
 checkpoints/
 venv_distmat/
+
+# 测试输出文件
+test_*.pdb
+test_*.npy
