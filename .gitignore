@@ -1,5 +1,6 @@
 # 数据集文件（太大，不上传到GitHub）
 P-L/
+P-L.tar.gz
 index/
 protein_sequences.json
 protein_coords_data.json
@@ -8,6 +9,9 @@ coord_val.json
 mtp_data_train.json
 mtp_data_val.json
 instruction_data.json
+distmat_train.json
+distmat_val.json
+test_samples.json
 
 # Python
 __pycache__/
@@ -17,6 +21,7 @@ __pycache__/
 .Python
 env/
 venv/
+venv_*/
 .venv/
 
 # IDE
@@ -30,6 +35,8 @@ venv/
 *.pth
 *.bin
 *.safetensors
+*.tar.gz
+*.zip
 
 # 日志
 *.log
