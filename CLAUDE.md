@@ -12,6 +12,21 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Key Insight**: MTP uses placeholder tokens to constrain output length. In the reference classification task, `num_of_pl_tokens = num_classes`. In this protein structure prediction task, `num_of_pl_tokens = sequence_length`.
 
+## ⚠️ IMPORTANT: Method Evolution
+
+### v1 (Current - Deprecated): Absolute Coordinate Regression
+- Output: (N, 3) absolute coordinates per residue
+- Problem: Sensitive to translation/rotation - same structure at different positions produces different coordinates
+- Status: Training completed with Qwen3-8B, but approach has fundamental limitations
+
+### v2 (In Development): Distance Matrix Prediction
+- Output: (N, N) pairwise distance matrix
+- Advantage: **Rotation/translation invariant** - distances don't change when protein moves/rotates
+- Loss: MSE on distance matrix
+- Coordinate reconstruction: Use MDS (Multidimensional Scaling) to recover 3D coordinates from distances
+
+See DISCUSSION.md "2026-01-30 师兄反馈" for detailed technical discussion.
+
 ## Commands
 
 ### Data Preparation
